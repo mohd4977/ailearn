@@ -6,7 +6,8 @@
 import os
 from getpass import getpass
 
-os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", getpass("Enter your LangChain API key: "))
+api_key = os.getenv("LANGCHAIN_API_KEY")
+os.environ["LANGCHAIN_API_KEY"] = api_key
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.langchain.com"
 os.environ["LANGCHAIN_PROJECT"] = "my_project"
