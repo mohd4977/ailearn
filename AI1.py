@@ -19,8 +19,8 @@ if not api_key:
 
 # Set other LangChain environment variables
 os.environ["LANGCHAIN_API_KEY"] = api_key
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.langchain.com"
+os.environ["LANGCHAIN_TRACING_V2"] = "false" #set to true if you want to trace the agent execution
+#os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com" #activate if want tracing on langsmith dashboard. It is very expensive.
 os.environ["LANGCHAIN_PROJECT"] = "my_project"
 
 from langchain_core.tools import tool
@@ -57,6 +57,11 @@ def add(x: float, y: float, z: float | None = 0.3) -> float: #just like this the
     """Add 'x' and 'y'."""
     return x + y if z else x + y + z
 
+@tool #with this decorator our function becomes Structured tool object
+def subtract(x: float, y: float, z: float | None = 0.3) -> float: #just like this there are more tools multiply, exponentiate, subtract
+    """Subtract 'y' from 'x'."""
+    return x - y if z else x - y - z
+
 print(add) #structure tool will output something like name='add' description="Add 'x' and 'y'." args_schema=<class 'langchain_core.utils.pydantic.add'> func=<function add at 0x000001E9A6D654E0>
 #you can print name and description of function
 
@@ -74,13 +79,109 @@ print(add.func(**llm_output_dict))
 
 #defining prompt
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You're a helpful assistant."),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("user", "{input}")
+    ("system", "You are a helpful AI assistant."),
+    ("user", "{input}"),
+    ("user", "{agent_scratchpad}")  # required!
 ])
 
 #Next we need to define our LLM, we will use the gpt-4o-mini model with the temprature of 0.0
 
 from langchain_openai import ChatOpenAI
 
-os.environ["OPENAI_API_KEY"] = api_key
+ai_key = os.getenv("OPENAI_API_KEY")
+os.environ["OPENAI_API_KEY"] = ai_key
+
+llm = ChatOpenAI(model="gpt-3.5-turbo")  # or "gpt-4o"
+#response = llm.invoke("What's something cool about LangChain?")
+#print(response.content)
+
+#We'll be using the older ConversationBufferMemory class to store the chat history rather than the newer RunableWithMessageHistory class.
+
+from langchain.memory import ConversationBufferMemory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain.agents import create_tool_calling_agent
+
+# Now we will initialize the agent with the tools, prompt, LLM, and memory.
+tools = [add, subtract] #list of tools to be used by the agent
+
+memory = ConversationBufferMemory(
+    memory_key="chat_history", #Must align with the MessagesPlaceholder variable_name
+    return_messages=True #To return the messages in the chat history
+)
+
+agent = create_tool_calling_agent(
+    tools=tools,
+    prompt=prompt,
+    llm=llm,
+)
+
+agent_with_memory = RunnableWithMessageHistory(
+    agent,
+    lambda session_id: InMemoryChatMessageHistory(),
+    input_messages_key="input",
+    history_messages_key="agent_scratchpad"
+)
+
+
+
+
+
+
+
+
+
+
+#Our agent by itself is like one-step of our agent execution loop. So, if we call the agent.invoke() method, 
+# it will execute the agent with the current input and return the output. no tools will be executed yet,
+#because we haven't provided any input to the agent yet and no next iteration of the agent has been executed.
+
+response = agent.invoke({ #Old way to invoke the agent
+    "input": "What is 5 + 2?",
+    "intermediate_steps": []
+})
+print(response)
+
+response2 = agent_with_memory.invoke(
+    {
+        "input": "What is 5 + 2?",
+        "intermediate_steps": []  # required
+    },
+    config={"configurable": {"session_id": "user-session-1"}}
+)
+
+print(response2)
+
+#Why Use AgentExecutor?
+#Simplifies how you run agents.
+
+#Automatically handles the intermediate_steps lifecycle.
+
+#Integrates easily with memory (ConversationBufferMemory).
+
+#Supports multi-step execution out of the box.
+
+from langchain.agents import AgentExecutor
+
+# Create agent executor
+agent_executor = AgentExecutor(
+    agent=agent,
+    tools=tools,
+    memory=memory,
+    verbose=True,
+    handle_parsing_errors=True,
+)
+
+# Invoke like this
+response3 = agent_executor.invoke({
+    "input": "What is 5 - 2?"
+})
+
+print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+print(response3)
+print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+
+#from langsmith import Client #To test if Lanchain is connected to LangSmith
+# Uncomment the following lines to connect to LangSmith
+#client = Client()
+#print("LangSmith connected:", list(client.list_projects()))
